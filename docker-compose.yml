@@ -1,0 +1,40 @@
+version: '3.8'
+
+services:
+  paperless-link-service:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      - PORT=8080
+      - DB_ENGINE=postgresql
+      - DB_HOST=db
+      - DB_PORT=5432
+      - DB_NAME=paperless
+      - DB_USER=paperless
+      - DB_PASS=paperless
+      - DB_SSL_MODE=prefer
+    depends_on:
+      - db
+    restart: unless-stopped
+    networks:
+      - paperless-network
+
+  db:
+    image: postgres:18
+    environment:
+      - POSTGRES_DB=paperless
+      - POSTGRES_USER=paperless
+      - POSTGRES_PASSWORD=paperless
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks:
+      - paperless-network
+
+networks:
+  paperless-network:
+    external: true
+
+volumes:
+  pgdata:
+
