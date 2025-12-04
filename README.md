@@ -16,6 +16,11 @@ A Go microservice for Paperless-ngx integration features, including custom field
 
 Get all unique values for a specific custom field.
 
+**Query Parameters:**
+- `sort_by` (optional): Sort field - `"count"` (default) or `"label"`
+- `sort_order` (optional): Sort direction - `"asc"` or `"desc"` (default: `"desc"` for count, `"asc"` for label)
+- `ignore_case` (optional): Case-insensitive sorting - `"true"` or `"1"` (default: `false`)
+
 **Response:**
 ```json
 {
@@ -58,6 +63,11 @@ Search for values matching a query string.
 ### POST `/api/custom-field-values/{fieldId}/counts/`
 
 Get value counts with optional filter rules applied.
+
+**Query Parameters:**
+- `sort_by` (optional): Sort field - `"count"` (default) or `"label"`
+- `sort_order` (optional): Sort direction - `"asc"` or `"desc"` (default: `"desc"` for count, `"asc"` for label)
+- `ignore_case` (optional): Case-insensitive sorting - `"true"` or `"1"` (default: `false`)
 
 **Request Body:**
 ```json

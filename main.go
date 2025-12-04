@@ -81,9 +81,11 @@ func NewService(config *Config) (*Service, error) {
 
 func connectDB(config *Config) (*sql.DB, error) {
 	var dsn string
+	var driverName string
 
 	switch config.DBEngine {
 	case "postgresql", "postgres":
+		driverName = "postgres" // lib/pq uses "postgres" as driver name
 		dsn = fmt.Sprintf(
 			"host=%s port=%s user=%s password=%s dbname=%s sslmode=%s",
 			config.DBHost,
@@ -94,6 +96,7 @@ func connectDB(config *Config) (*sql.DB, error) {
 			config.DBSSLMode,
 		)
 	case "mysql", "mariadb":
+		driverName = "mysql"
 		dsn = fmt.Sprintf(
 			"%s:%s@tcp(%s:%s)/%s?parseTime=true",
 			config.DBUser,
@@ -103,12 +106,13 @@ func connectDB(config *Config) (*sql.DB, error) {
 			config.DBName,
 		)
 	case "sqlite", "sqlite3":
+		driverName = "sqlite3"
 		dsn = config.DBPath
 	default:
 		return nil, fmt.Errorf("unsupported database engine: %s", config.DBEngine)
 	}
 
-	db, err := sql.Open(config.DBEngine, dsn)
+	db, err := sql.Open(driverName, dsn)
 	if err != nil {
 		return nil, err
 	}
@@ -121,7 +125,7 @@ func connectDB(config *Config) (*sql.DB, error) {
 	return db, nil
 }
 
-func (s *Service) GetFieldValues(fieldID int) (*CustomFieldValuesResponse, error) {
+func (s *Service) GetFieldValues(fieldID int, sortBy string, sortOrder string, ignoreCase bool) (*CustomFieldValuesResponse, error) {
 	// First, get the field name
 	var fieldName string
 	var queryFieldName string
@@ -176,34 +180,32 @@ func (s *Service) GetFieldValues(fieldID int) (*CustomFieldValuesResponse, error
 	var query string
 	var args []interface{}
 	
+	// Query to get all values with their document IDs
+	// We need document_id to properly count unique documents per individual value
 	switch s.config.DBEngine {
 	case "postgresql", "postgres":
 		query = fmt.Sprintf(`
 			SELECT 
 				%s as value,
-				COUNT(DISTINCT document_id) as count
+				document_id
 			FROM documents_customfieldinstance
 			WHERE field_id = $1 
 				AND deleted_at IS NULL
 				AND %s IS NOT NULL
 				AND %s != ''
-			GROUP BY %s
-			ORDER BY count DESC, %s ASC
-		`, valueColumn, valueColumn, valueColumn, valueColumn, valueColumn)
+		`, valueColumn, valueColumn, valueColumn)
 		args = []interface{}{fieldID}
 	case "mysql", "mariadb", "sqlite", "sqlite3":
 		query = fmt.Sprintf(`
 			SELECT 
 				%s as value,
-				COUNT(DISTINCT document_id) as count
+				document_id
 			FROM documents_customfieldinstance
 			WHERE field_id = ? 
 				AND deleted_at IS NULL
 				AND %s IS NOT NULL
 				AND %s != ''
-			GROUP BY %s
-			ORDER BY count DESC, %s ASC
-		`, valueColumn, valueColumn, valueColumn, valueColumn, valueColumn)
+		`, valueColumn, valueColumn, valueColumn)
 		args = []interface{}{fieldID}
 	default:
 		return nil, fmt.Errorf("unsupported database engine: %s", s.config.DBEngine)
@@ -215,13 +217,15 @@ func (s *Service) GetFieldValues(fieldID int) (*CustomFieldValuesResponse, error
 	}
 	defer rows.Close()
 
-	values := []CustomFieldValueOption{}
-	valueMap := make(map[string]int) // To aggregate parsed values
+	// Map to aggregate individual values and their document counts
+	// Key: individual value (e.g., "Dawson Davies")
+	// Value: set of document IDs that contain this value
+	valueDocumentMap := make(map[string]map[int]bool)
 
 	for rows.Next() {
 		var value string
-		var count int
-		if err := rows.Scan(&value, &count); err != nil {
+		var documentID int
+		if err := rows.Scan(&value, &documentID); err != nil {
 			continue
 		}
 
@@ -230,29 +234,28 @@ func (s *Service) GetFieldValues(fieldID int) (*CustomFieldValuesResponse, error
 		for _, part := range parts {
 			part = strings.TrimSpace(part)
 			if part != "" {
-				valueMap[part] += count
+				// Initialize map for this value if it doesn't exist
+				if valueDocumentMap[part] == nil {
+					valueDocumentMap[part] = make(map[int]bool)
+				}
+				// Add this document ID to the set for this value
+				valueDocumentMap[part][documentID] = true
 			}
 		}
 	}
 
-	// Convert map to slice
-	for value, count := range valueMap {
+	// Convert map to slice, counting unique documents per value
+	values := []CustomFieldValueOption{}
+	for value, documentSet := range valueDocumentMap {
 		values = append(values, CustomFieldValueOption{
 			ID:    generateID(value),
 			Label: value,
-			Count: count,
+			Count: len(documentSet), // Count of unique documents containing this value
 		})
 	}
 
-	// Sort by count descending, then by label ascending
-	for i := 0; i < len(values)-1; i++ {
-		for j := i + 1; j < len(values); j++ {
-			if values[i].Count < values[j].Count ||
-				(values[i].Count == values[j].Count && values[i].Label > values[j].Label) {
-				values[i], values[j] = values[j], values[i]
-			}
-		}
-	}
+	// Sort values based on sortBy and sortOrder parameters
+	values = sortValues(values, sortBy, sortOrder, ignoreCase)
 
 	// Get total document count
 	var totalDocuments int
@@ -278,30 +281,39 @@ func (s *Service) GetFieldValues(fieldID int) (*CustomFieldValuesResponse, error
 	}, nil
 }
 
-func (s *Service) SearchFieldValues(fieldID int, query string) ([]CustomFieldValueOption, error) {
+func (s *Service) SearchFieldValues(fieldID int, query string, sortBy string, sortOrder string, ignoreCase bool) ([]CustomFieldValueOption, error) {
 	// Get all values first
-	response, err := s.GetFieldValues(fieldID)
+	response, err := s.GetFieldValues(fieldID, sortBy, sortOrder, ignoreCase)
 	if err != nil {
 		return nil, err
 	}
 
-	// Filter by query string (case-insensitive)
-	queryLower := strings.ToLower(query)
+	// Filter by query string
 	filtered := []CustomFieldValueOption{}
+	queryLower := strings.ToLower(query)
 
 	for _, value := range response.Values {
-		if strings.Contains(strings.ToLower(value.Label), queryLower) {
+		valueLabel := value.Label
+		queryStr := query
+		if ignoreCase {
+			valueLabel = strings.ToLower(valueLabel)
+			queryStr = queryLower
+		}
+		if strings.Contains(valueLabel, queryStr) {
 			filtered = append(filtered, value)
 		}
 	}
 
+	// Re-sort filtered results
+	filtered = sortValues(filtered, sortBy, sortOrder, ignoreCase)
+
 	return filtered, nil
 }
 
-func (s *Service) GetValueCounts(fieldID int, filterRulesJSON string) ([]CustomFieldValueOption, error) {
+func (s *Service) GetValueCounts(fieldID int, filterRulesJSON string, sortBy string, sortOrder string, ignoreCase bool) ([]CustomFieldValueOption, error) {
 	// For now, return all values with counts
 	// In the future, we can apply filter rules to count only matching documents
-	response, err := s.GetFieldValues(fieldID)
+	response, err := s.GetFieldValues(fieldID, sortBy, sortOrder, ignoreCase)
 	if err != nil {
 		return nil, err
 	}
@@ -338,11 +350,87 @@ func getValueColumnName(dataType string) string {
 }
 
 func parseValueList(value string) []string {
-	// Split by comma or colon
+	// Split by comma, colon, or semicolon
 	parts := strings.FieldsFunc(value, func(r rune) bool {
-		return r == ',' || r == ':'
+		return r == ',' || r == ':' || r == ';'
 	})
 	return parts
+}
+
+// sortValues sorts the values based on sortBy, sortOrder, and ignoreCase parameters
+// sortBy: "count" or "label" (default: "count")
+// sortOrder: "asc" or "desc" (default: "desc" for count, "asc" for label)
+// ignoreCase: if true, case-insensitive comparison for label sorting
+func sortValues(values []CustomFieldValueOption, sortBy string, sortOrder string, ignoreCase bool) []CustomFieldValueOption {
+	// Default values
+	if sortBy == "" {
+		sortBy = "count"
+	}
+	if sortOrder == "" {
+		if sortBy == "count" {
+			sortOrder = "desc"
+		} else {
+			sortOrder = "asc"
+		}
+	}
+
+	// Normalize sortBy and sortOrder
+	sortBy = strings.ToLower(sortBy)
+	sortOrder = strings.ToLower(sortOrder)
+
+	// Create a copy to avoid modifying the original slice
+	sorted := make([]CustomFieldValueOption, len(values))
+	copy(sorted, values)
+
+	// Sort based on sortBy
+	for i := 0; i < len(sorted)-1; i++ {
+		for j := i + 1; j < len(sorted); j++ {
+			var shouldSwap bool
+
+			if sortBy == "count" {
+				// Sort by count
+				if sortOrder == "asc" {
+					shouldSwap = sorted[i].Count > sorted[j].Count ||
+						(sorted[i].Count == sorted[j].Count && compareLabels(sorted[i].Label, sorted[j].Label, ignoreCase) > 0)
+				} else { // desc
+					shouldSwap = sorted[i].Count < sorted[j].Count ||
+						(sorted[i].Count == sorted[j].Count && compareLabels(sorted[i].Label, sorted[j].Label, ignoreCase) > 0)
+				}
+			} else { // sortBy == "label"
+				// Sort by label
+				labelComparison := compareLabels(sorted[i].Label, sorted[j].Label, ignoreCase)
+				if sortOrder == "asc" {
+					shouldSwap = labelComparison > 0 ||
+						(labelComparison == 0 && sorted[i].Count < sorted[j].Count)
+				} else { // desc
+					shouldSwap = labelComparison < 0 ||
+						(labelComparison == 0 && sorted[i].Count < sorted[j].Count)
+				}
+			}
+
+			if shouldSwap {
+				sorted[i], sorted[j] = sorted[j], sorted[i]
+			}
+		}
+	}
+
+	return sorted
+}
+
+// compareLabels compares two labels, optionally ignoring case
+// Returns: -1 if a < b, 0 if a == b, 1 if a > b
+func compareLabels(a, b string, ignoreCase bool) int {
+	if ignoreCase {
+		a = strings.ToLower(a)
+		b = strings.ToLower(b)
+	}
+	if a < b {
+		return -1
+	}
+	if a > b {
+		return 1
+	}
+	return 0
 }
 
 func generateID(value string) string {
@@ -365,7 +453,13 @@ func (s *Service) handleGetFieldValues(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	response, err := s.GetFieldValues(fieldID)
+	// Parse query parameters
+	sortBy := r.URL.Query().Get("sort_by")
+	sortOrder := r.URL.Query().Get("sort_order")
+	ignoreCaseStr := r.URL.Query().Get("ignore_case")
+	ignoreCase := ignoreCaseStr == "true" || ignoreCaseStr == "1"
+
+	response, err := s.GetFieldValues(fieldID, sortBy, sortOrder, ignoreCase)
 	if err != nil {
 		respondError(w, http.StatusNotFound, err.Error())
 		return
@@ -390,7 +484,13 @@ func (s *Service) handleSearchFieldValues(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	values, err := s.SearchFieldValues(fieldID, query)
+	// Parse query parameters
+	sortBy := r.URL.Query().Get("sort_by")
+	sortOrder := r.URL.Query().Get("sort_order")
+	ignoreCaseStr := r.URL.Query().Get("ignore_case")
+	ignoreCase := ignoreCaseStr == "true" || ignoreCaseStr == "1"
+
+	values, err := s.SearchFieldValues(fieldID, query, sortBy, sortOrder, ignoreCase)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -421,7 +521,13 @@ func (s *Service) handleGetValueCounts(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	values, err := s.GetValueCounts(fieldID, filterRulesJSON)
+	// Parse query parameters
+	sortBy := r.URL.Query().Get("sort_by")
+	sortOrder := r.URL.Query().Get("sort_order")
+	ignoreCaseStr := r.URL.Query().Get("ignore_case")
+	ignoreCase := ignoreCaseStr == "true" || ignoreCaseStr == "1"
+
+	values, err := s.GetValueCounts(fieldID, filterRulesJSON, sortBy, sortOrder, ignoreCase)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, err.Error())
 		return
