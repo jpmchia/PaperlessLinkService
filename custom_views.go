@@ -349,12 +349,12 @@ func (s *Service) UpdateCustomView(id int, updates CustomView, userID int) (*Cus
 	}
 
 	// Update modified timestamp
+	// For all databases, use CURRENT_TIMESTAMP directly in SQL (not as a parameter)
 	if s.config.DBEngine == "mysql" || s.config.DBEngine == "mariadb" {
 		setParts = append(setParts, "modified = CURRENT_TIMESTAMP")
 	} else if usePostgres {
-		setParts = append(setParts, fmt.Sprintf("modified = $%d", argIndex))
-		args = append(args, "CURRENT_TIMESTAMP")
-		argIndex++
+		// PostgreSQL: Use CURRENT_TIMESTAMP directly in SQL, not as a parameter
+		setParts = append(setParts, "modified = CURRENT_TIMESTAMP")
 	} else {
 		// SQLite
 		setParts = append(setParts, "modified = CURRENT_TIMESTAMP")
