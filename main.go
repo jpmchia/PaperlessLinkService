@@ -15,14 +15,20 @@ import (
 
 func main() {
 	config := loadConfig()
-	log.Printf("Starting Paperless Link Service on port %s", config.Port)
+	log.Printf("[Main] Starting Paperless Link Service on port %s", config.Port)
+	log.Printf("[Main] Database configuration - Engine: %s, Host: %s, Port: %s, DB: %s",
+		config.DBEngine, config.DBHost, config.DBPort, config.DBName)
 
 	service, err := NewService(config)
 	if err != nil {
-		log.Fatalf("Failed to initialize service: %v", err)
+		log.Fatalf("[Main] Failed to initialize service: %v", err)
 	}
-	defer service.db.Close()
+	defer func() {
+		log.Printf("[Main] Closing database connection")
+		service.db.Close()
+	}()
 
+	log.Printf("[Main] Setting up router and routes")
 	// Setup router
 	router := mux.NewRouter()
 
@@ -67,9 +73,16 @@ func main() {
 
 	// Start server in goroutine
 	go func() {
-		log.Printf("Server listening on :%s", config.Port)
+		log.Printf("[Main] Server listening on :%s", config.Port)
+		log.Printf("[Main] API endpoints available:")
+		log.Printf("[Main]   GET    /api/custom_views/")
+		log.Printf("[Main]   POST   /api/custom_views/")
+		log.Printf("[Main]   GET    /api/custom_views/{id}/")
+		log.Printf("[Main]   PUT    /api/custom_views/{id}/")
+		log.Printf("[Main]   PATCH  /api/custom_views/{id}/")
+		log.Printf("[Main]   DELETE /api/custom_views/{id}/")
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("Server failed: %v", err)
+			log.Fatalf("[Main] Server failed: %v", err)
 		}
 	}()
 

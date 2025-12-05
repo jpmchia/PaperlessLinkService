@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -13,6 +14,7 @@ import (
 
 // ListCustomViews retrieves a list of custom views for a user
 func (s *Service) ListCustomViews(userID *int, includeGlobal bool) ([]CustomView, error) {
+	log.Printf("[CustomViews] ListCustomViews - UserID: %v, IncludeGlobal: %v", userID, includeGlobal)
 	var query string
 	var args []interface{}
 
@@ -148,6 +150,7 @@ func (s *Service) GetCustomView(id int) (*CustomView, error) {
 
 // CreateCustomView creates a new custom view
 func (s *Service) CreateCustomView(view CustomView, userID int, username string) (*CustomView, error) {
+	log.Printf("[CustomViews] CreateCustomView - Name: %s, UserID: %d, Username: %s", view.Name, userID, username)
 	// Marshal JSON fields
 	columnOrderJSON, _ := json.Marshal(view.ColumnOrder)
 	columnSizingJSON, _ := json.Marshal(view.ColumnSizing)
@@ -245,6 +248,7 @@ func (s *Service) CreateCustomView(view CustomView, userID int, username string)
 
 // UpdateCustomView updates an existing custom view
 func (s *Service) UpdateCustomView(id int, updates CustomView, userID int) (*CustomView, error) {
+	log.Printf("[CustomViews] UpdateCustomView - ID: %d, UserID: %d", id, userID)
 	// Get existing view
 	existing, err := s.GetCustomView(id)
 	if err != nil {
@@ -376,6 +380,7 @@ func (s *Service) UpdateCustomView(id int, updates CustomView, userID int) (*Cus
 
 // DeleteCustomView soft-deletes a custom view
 func (s *Service) DeleteCustomView(id int, userID int) error {
+	log.Printf("[CustomViews] DeleteCustomView - ID: %d, UserID: %d", id, userID)
 	// Get existing view to check ownership
 	existing, err := s.GetCustomView(id)
 	if err != nil {
@@ -494,52 +499,75 @@ func (s *Service) scanCustomView(scanner interface{}) (CustomView, error) {
 
 // HTTP Handlers for Custom Views
 func (s *Service) handleListCustomViews(w http.ResponseWriter, r *http.Request) {
-	userID, _ := getUserIDFromRequest(r)
+	log.Printf("[CustomViews] GET /api/custom_views/ - Request from %s", r.RemoteAddr)
+	
+	userID, err := getUserIDFromRequest(r)
+	if err != nil {
+		log.Printf("[CustomViews] Error getting user ID: %v", err)
+		respondError(w, http.StatusUnauthorized, "Unauthorized")
+		return
+	}
+	log.Printf("[CustomViews] User ID: %d", *userID)
 
 	// Include global views by default
 	includeGlobal := r.URL.Query().Get("global_only") != "true"
+	log.Printf("[CustomViews] Include global views: %v", includeGlobal)
 
 	views, err := s.ListCustomViews(userID, includeGlobal)
 	if err != nil {
+		log.Printf("[CustomViews] Error listing views: %v", err)
 		respondError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
+	log.Printf("[CustomViews] Found %d views", len(views))
 	response := CustomViewListResponse{
 		Count:   len(views),
 		Results: views,
 	}
 
 	respondJSON(w, http.StatusOK, response)
+	log.Printf("[CustomViews] Successfully returned %d views", len(views))
 }
 
 func (s *Service) handleGetCustomView(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	idStr := vars["id"]
+	log.Printf("[CustomViews] GET /api/custom_views/%s/ - Request from %s", idStr, r.RemoteAddr)
 
 	id, err := strconv.Atoi(idStr)
 	if err != nil {
+		log.Printf("[CustomViews] Invalid view ID: %s", idStr)
 		respondError(w, http.StatusBadRequest, "Invalid view ID")
 		return
 	}
 
+	log.Printf("[CustomViews] Fetching view ID: %d", id)
 	view, err := s.GetCustomView(id)
 	if err != nil {
+		log.Printf("[CustomViews] Error getting view %d: %v", id, err)
 		respondError(w, http.StatusNotFound, err.Error())
 		return
 	}
 
+	log.Printf("[CustomViews] Successfully retrieved view %d: %s", id, view.Name)
 	respondJSON(w, http.StatusOK, view)
 }
 
 func (s *Service) handleCreateCustomView(w http.ResponseWriter, r *http.Request) {
+	log.Printf("[CustomViews] POST /api/custom_views/ - Request from %s", r.RemoteAddr)
+	
 	var view CustomView
 	if err := json.NewDecoder(r.Body).Decode(&view); err != nil {
+		log.Printf("[CustomViews] Error decoding request body: %v", err)
 		respondError(w, http.StatusBadRequest, fmt.Sprintf("Invalid request body: %v", err))
 		return
 	}
 
+	log.Printf("[CustomViews] Creating view: Name=%s, IsGlobal=%v", view.Name, view.IsGlobal)
+
 	if view.Name == "" {
+		log.Printf("[CustomViews] Validation error: Name is required")
 		respondError(w, http.StatusBadRequest, "Name is required")
 		return
 	}
@@ -558,38 +586,58 @@ func (s *Service) handleCreateCustomView(w http.ResponseWriter, r *http.Request)
 		view.ColumnDisplayTypes = make(map[string]string)
 	}
 
-	userID, _ := getUserIDFromRequest(r)
+	userID, err := getUserIDFromRequest(r)
+	if err != nil {
+		log.Printf("[CustomViews] Error getting user ID: %v", err)
+		respondError(w, http.StatusUnauthorized, "Unauthorized")
+		return
+	}
 	username := getUsernameFromRequest(r)
+	log.Printf("[CustomViews] User ID: %d, Username: %s", *userID, *username)
 
 	created, err := s.CreateCustomView(view, *userID, *username)
 	if err != nil {
+		log.Printf("[CustomViews] Error creating view: %v", err)
 		respondError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
+	log.Printf("[CustomViews] Successfully created view ID: %d, Name: %s", created.ID, created.Name)
 	respondJSON(w, http.StatusCreated, created)
 }
 
 func (s *Service) handleUpdateCustomView(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	idStr := vars["id"]
+	method := r.Method
+	log.Printf("[CustomViews] %s /api/custom_views/%s/ - Request from %s", method, idStr, r.RemoteAddr)
 
 	id, err := strconv.Atoi(idStr)
 	if err != nil {
+		log.Printf("[CustomViews] Invalid view ID: %s", idStr)
 		respondError(w, http.StatusBadRequest, "Invalid view ID")
 		return
 	}
 
 	var updates CustomView
 	if err := json.NewDecoder(r.Body).Decode(&updates); err != nil {
+		log.Printf("[CustomViews] Error decoding request body for view %d: %v", id, err)
 		respondError(w, http.StatusBadRequest, fmt.Sprintf("Invalid request body: %v", err))
 		return
 	}
 
-	userID, _ := getUserIDFromRequest(r)
+	log.Printf("[CustomViews] Updating view ID: %d", id)
+	userID, err := getUserIDFromRequest(r)
+	if err != nil {
+		log.Printf("[CustomViews] Error getting user ID: %v", err)
+		respondError(w, http.StatusUnauthorized, "Unauthorized")
+		return
+	}
+	log.Printf("[CustomViews] User ID: %d", *userID)
 
 	updated, err := s.UpdateCustomView(id, updates, *userID)
 	if err != nil {
+		log.Printf("[CustomViews] Error updating view %d: %v", id, err)
 		if strings.Contains(err.Error(), "permission denied") {
 			respondError(w, http.StatusForbidden, err.Error())
 			return
@@ -598,22 +646,32 @@ func (s *Service) handleUpdateCustomView(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	log.Printf("[CustomViews] Successfully updated view ID: %d", id)
 	respondJSON(w, http.StatusOK, updated)
 }
 
 func (s *Service) handleDeleteCustomView(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	idStr := vars["id"]
+	log.Printf("[CustomViews] DELETE /api/custom_views/%s/ - Request from %s", idStr, r.RemoteAddr)
 
 	id, err := strconv.Atoi(idStr)
 	if err != nil {
+		log.Printf("[CustomViews] Invalid view ID: %s", idStr)
 		respondError(w, http.StatusBadRequest, "Invalid view ID")
 		return
 	}
 
-	userID, _ := getUserIDFromRequest(r)
+	userID, err := getUserIDFromRequest(r)
+	if err != nil {
+		log.Printf("[CustomViews] Error getting user ID: %v", err)
+		respondError(w, http.StatusUnauthorized, "Unauthorized")
+		return
+	}
+	log.Printf("[CustomViews] Deleting view ID: %d, User ID: %d", id, *userID)
 
 	if err := s.DeleteCustomView(id, *userID); err != nil {
+		log.Printf("[CustomViews] Error deleting view %d: %v", id, err)
 		if strings.Contains(err.Error(), "permission denied") {
 			respondError(w, http.StatusForbidden, err.Error())
 			return
@@ -622,6 +680,7 @@ func (s *Service) handleDeleteCustomView(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	log.Printf("[CustomViews] Successfully deleted view ID: %d", id)
 	w.WriteHeader(http.StatusNoContent)
 }
 

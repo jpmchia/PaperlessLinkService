@@ -3,6 +3,7 @@ package main
 import (
 	"database/sql"
 	"fmt"
+	"log"
 	"time"
 
 	_ "github.com/go-sql-driver/mysql"
@@ -12,6 +13,9 @@ import (
 
 // connectDB establishes a connection to the database
 func connectDB(config *Config) (*sql.DB, error) {
+	log.Printf("[Database] Connecting to database - Engine: %s, Host: %s, Port: %s, DB: %s", 
+		config.DBEngine, config.DBHost, config.DBPort, config.DBName)
+	
 	var dsn string
 	var driverName string
 
@@ -59,6 +63,7 @@ func connectDB(config *Config) (*sql.DB, error) {
 
 // initCustomViewsTable creates the custom_views table if it doesn't exist
 func (s *Service) initCustomViewsTable() error {
+	log.Printf("[Database] Initializing custom_views table for engine: %s", s.config.DBEngine)
 	var createTableQuery string
 
 	switch s.config.DBEngine {
@@ -138,13 +143,17 @@ func (s *Service) initCustomViewsTable() error {
 			CREATE INDEX IF NOT EXISTS idx_custom_views_deleted ON custom_views(deleted_at);
 		`
 	default:
+		log.Printf("[Database] Unsupported database engine: %s", s.config.DBEngine)
 		return fmt.Errorf("unsupported database engine: %s", s.config.DBEngine)
 	}
 
+	log.Printf("[Database] Executing CREATE TABLE statement for custom_views")
 	if _, err := s.db.Exec(createTableQuery); err != nil {
+		log.Printf("[Database] Error creating custom_views table: %v", err)
 		return fmt.Errorf("failed to create custom_views table: %w", err)
 	}
 
+	log.Printf("[Database] Successfully created/verified custom_views table")
 	return nil
 }
 
