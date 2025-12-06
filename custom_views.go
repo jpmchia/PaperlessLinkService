@@ -333,6 +333,48 @@ func (s *Service) UpdateCustomView(id int, updates CustomView, userID int) (*Cus
 		argIndex++
 		existing.ColumnDisplayTypes = updates.ColumnDisplayTypes
 	}
+	if updates.FilterRules != nil {
+		filterRulesJSON, _ := json.Marshal(updates.FilterRules)
+		if usePostgres {
+			setParts = append(setParts, fmt.Sprintf("filter_rules = $%d::jsonb", argIndex))
+		} else {
+			setParts = append(setParts, "filter_rules = ?")
+		}
+		args = append(args, string(filterRulesJSON))
+		argIndex++
+		existing.FilterRules = updates.FilterRules
+	}
+	if updates.FilterVisibility != nil {
+		filterVisibilityJSON, _ := json.Marshal(updates.FilterVisibility)
+		if usePostgres {
+			setParts = append(setParts, fmt.Sprintf("filter_visibility = $%d::jsonb", argIndex))
+		} else {
+			setParts = append(setParts, "filter_visibility = ?")
+		}
+		args = append(args, string(filterVisibilityJSON))
+		argIndex++
+		existing.FilterVisibility = updates.FilterVisibility
+	}
+	if updates.SortField != nil {
+		if usePostgres {
+			setParts = append(setParts, fmt.Sprintf("sort_field = $%d", argIndex))
+		} else {
+			setParts = append(setParts, "sort_field = ?")
+		}
+		args = append(args, updates.SortField)
+		argIndex++
+		existing.SortField = updates.SortField
+	}
+	if updates.SortReverse != nil {
+		if usePostgres {
+			setParts = append(setParts, fmt.Sprintf("sort_reverse = $%d", argIndex))
+		} else {
+			setParts = append(setParts, "sort_reverse = ?")
+		}
+		args = append(args, *updates.SortReverse)
+		argIndex++
+		existing.SortReverse = updates.SortReverse
+	}
 	if updates.IsGlobal != nil {
 		if usePostgres {
 			setParts = append(setParts, fmt.Sprintf("is_global = $%d", argIndex))

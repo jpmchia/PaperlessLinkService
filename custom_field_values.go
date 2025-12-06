@@ -58,6 +58,47 @@ func (s *Service) GetFieldValues(fieldID int, sortBy string, sortOrder string, i
 		return nil, fmt.Errorf("failed to get field data type: %w", err)
 	}
 
+	// Get extra_data for SELECT fields to map option IDs to labels
+	var extraDataJSON []byte
+	var queryExtraData string
+	var argsExtraData []interface{}
+	
+	switch s.config.DBEngine {
+	case "postgresql", "postgres":
+		queryExtraData = "SELECT extra_data FROM documents_customfield WHERE id = $1"
+		argsExtraData = []interface{}{fieldID}
+	case "mysql", "mariadb", "sqlite", "sqlite3":
+		queryExtraData = "SELECT extra_data FROM documents_customfield WHERE id = ?"
+		argsExtraData = []interface{}{fieldID}
+	default:
+		return nil, fmt.Errorf("unsupported database engine: %s", s.config.DBEngine)
+	}
+	
+	err = s.db.QueryRow(queryExtraData, argsExtraData...).Scan(&extraDataJSON)
+	if err != nil && err != sql.ErrNoRows {
+		// Log but don't fail - extra_data might not exist for all fields
+		fmt.Printf("Warning: Could not fetch extra_data for field %d: %v\n", fieldID, err)
+	}
+	
+	// Parse select_options if this is a SELECT field
+	selectOptionMap := make(map[string]string)
+	if dataType == "select" && len(extraDataJSON) > 0 {
+		var extraData map[string]interface{}
+		if err := json.Unmarshal(extraDataJSON, &extraData); err == nil {
+			if selectOptions, ok := extraData["select_options"].([]interface{}); ok {
+				for _, opt := range selectOptions {
+					if optMap, ok := opt.(map[string]interface{}); ok {
+						if optID, ok := optMap["id"].(string); ok {
+							if optLabel, ok := optMap["label"].(string); ok {
+								selectOptionMap[optID] = optLabel
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
 	// Determine the value column name based on data type
 	valueColumn := getValueColumnName(dataType)
 
@@ -132,9 +173,30 @@ func (s *Service) GetFieldValues(fieldID int, sortBy string, sortOrder string, i
 	// Convert map to slice, counting unique documents per value
 	values := []CustomFieldValueOption{}
 	for value, documentSet := range valueDocumentMap {
+		// For SELECT fields, use the value (option ID) as the ID and look up the label
+		// For other field types, use the value as both ID and label
+		var optionID string
+		var label string
+		
+		if dataType == "select" {
+			// For SELECT fields, the value is the option ID
+			optionID = value
+			// Look up the label from selectOptionMap
+			if mappedLabel, exists := selectOptionMap[value]; exists {
+				label = mappedLabel
+			} else {
+				// Fallback to value if label not found (shouldn't happen, but handle gracefully)
+				label = value
+			}
+		} else {
+			// For non-SELECT fields, generate an ID and use value as label
+			optionID = generateID(value)
+			label = value
+		}
+		
 		values = append(values, CustomFieldValueOption{
-			ID:    generateID(value),
-			Label: value,
+			ID:    optionID,
+			Label: label,
 			Count: len(documentSet), // Count of unique documents containing this value
 		})
 	}
