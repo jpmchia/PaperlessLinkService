@@ -38,6 +38,10 @@ func main() {
 	customFieldValuesAPI.HandleFunc("/{fieldId:[0-9]+}/search/", service.handleSearchFieldValues).Methods("GET")
 	customFieldValuesAPI.HandleFunc("/{fieldId:[0-9]+}/counts/", service.handleGetValueCounts).Methods("POST")
 
+	// API routes for built-in filter values
+	builtinFilterValuesAPI := router.PathPrefix("/api/builtin-filter-values").Subrouter()
+	builtinFilterValuesAPI.HandleFunc("/{filterType}/", service.handleGetBuiltinFilterValues).Methods("POST")
+
 	// API routes for custom views
 	customViewsAPI := router.PathPrefix("/api/custom_views").Subrouter()
 	customViewsAPI.HandleFunc("/", service.handleListCustomViews).Methods("GET")

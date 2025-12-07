@@ -310,8 +310,10 @@ func (s *Service) SearchFieldValues(fieldID int, query string, sortBy string, so
 }
 
 // buildDocumentFilterQuery builds a WHERE clause to filter documents based on filter rules
-// Returns the WHERE clause and arguments, excluding filters for the specified fieldID
-func (s *Service) buildDocumentFilterQuery(filterRulesJSON string, excludeFieldID int) (string, []interface{}, error) {
+// Returns the WHERE clause and arguments, excluding filters for the specified fieldID or ruleType
+// excludeFieldID: exclude custom field filters for this field ID (0 = don't exclude)
+// excludeRuleType: exclude built-in filter rules of this type (0 = don't exclude)
+func (s *Service) buildDocumentFilterQuery(filterRulesJSON string, excludeFieldID int, excludeRuleType int) (string, []interface{}, error) {
 	if filterRulesJSON == "" {
 		return "", nil, nil
 	}
@@ -350,12 +352,19 @@ func (s *Service) buildDocumentFilterQuery(filterRulesJSON string, excludeFieldI
 		if !ok {
 			continue
 		}
+		ruleTypeInt := int(ruleType)
+
+		// Skip excluded rule type
+		if excludeRuleType > 0 && ruleTypeInt == excludeRuleType {
+			continue
+		}
+
 		value, ok := rule["value"].(string)
 		if !ok {
 			continue
 		}
 
-		switch int(ruleType) {
+		switch ruleTypeInt {
 		case FILTER_CORRESPONDENT:
 			// Filter by correspondent ID
 			if usePostgres {
@@ -727,7 +736,7 @@ func (s *Service) GetValueCounts(fieldID int, filterRulesJSON string, sortBy str
 	valueColumn := getValueColumnName(dataType)
 
 	// Build document filter query (excluding current field)
-	docFilterWhere, docFilterArgs, err := s.buildDocumentFilterQuery(filterRulesJSON, fieldID)
+	docFilterWhere, docFilterArgs, err := s.buildDocumentFilterQuery(filterRulesJSON, fieldID, 0)
 	if err != nil {
 		// If filter parsing fails, fall back to unfiltered query
 		fmt.Printf("[GetValueCounts] Error building document filter query for field %d: %v\n", fieldID, err)
