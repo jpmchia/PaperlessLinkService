@@ -26,8 +26,8 @@ func (s *Service) ListCustomViews(userID *int, includeGlobal bool) ([]CustomView
 			case "postgresql", "postgres":
 				query = `
 					SELECT id, name, description, column_order, column_sizing, column_visibility,
-						column_display_types, filter_rules, filter_visibility, sort_field, sort_reverse,
-						is_global, owner_id, username, created, modified, deleted_at
+						column_display_types, filter_rules, filter_visibility, subrow_enabled, subrow_content,
+						column_spanning, sort_field, sort_reverse, is_global, owner_id, username, created, modified, deleted_at
 					FROM custom_views
 					WHERE deleted_at IS NULL
 						AND (owner_id = $1 OR is_global = true)
@@ -37,8 +37,8 @@ func (s *Service) ListCustomViews(userID *int, includeGlobal bool) ([]CustomView
 			case "mysql", "mariadb", "sqlite", "sqlite3":
 				query = `
 					SELECT id, name, description, column_order, column_sizing, column_visibility,
-						column_display_types, filter_rules, filter_visibility, sort_field, sort_reverse,
-						is_global, owner_id, username, created, modified, deleted_at
+						column_display_types, filter_rules, filter_visibility, subrow_enabled, subrow_content,
+						column_spanning, sort_field, sort_reverse, is_global, owner_id, username, created, modified, deleted_at
 					FROM custom_views
 					WHERE deleted_at IS NULL
 						AND (owner_id = ? OR is_global = 1)
@@ -52,8 +52,8 @@ func (s *Service) ListCustomViews(userID *int, includeGlobal bool) ([]CustomView
 			case "postgresql", "postgres":
 				query = `
 					SELECT id, name, description, column_order, column_sizing, column_visibility,
-						column_display_types, filter_rules, filter_visibility, sort_field, sort_reverse,
-						is_global, owner_id, username, created, modified, deleted_at
+						column_display_types, filter_rules, filter_visibility, subrow_enabled, subrow_content,
+						column_spanning, sort_field, sort_reverse, is_global, owner_id, username, created, modified, deleted_at
 					FROM custom_views
 					WHERE deleted_at IS NULL AND owner_id = $1
 					ORDER BY created DESC
@@ -62,8 +62,8 @@ func (s *Service) ListCustomViews(userID *int, includeGlobal bool) ([]CustomView
 			case "mysql", "mariadb", "sqlite", "sqlite3":
 				query = `
 					SELECT id, name, description, column_order, column_sizing, column_visibility,
-						column_display_types, filter_rules, filter_visibility, sort_field, sort_reverse,
-						is_global, owner_id, username, created, modified, deleted_at
+						column_display_types, filter_rules, filter_visibility, subrow_enabled, subrow_content,
+						column_spanning, sort_field, sort_reverse, is_global, owner_id, username, created, modified, deleted_at
 					FROM custom_views
 					WHERE deleted_at IS NULL AND owner_id = ?
 					ORDER BY created DESC
@@ -77,8 +77,8 @@ func (s *Service) ListCustomViews(userID *int, includeGlobal bool) ([]CustomView
 		case "postgresql", "postgres":
 			query = `
 				SELECT id, name, description, column_order, column_sizing, column_visibility,
-					column_display_types, filter_rules, filter_visibility, sort_field, sort_reverse,
-					is_global, owner_id, username, created, modified, deleted_at
+					column_display_types, filter_rules, filter_visibility, subrow_enabled, subrow_content,
+					column_spanning, sort_field, sort_reverse, is_global, owner_id, username, created, modified, deleted_at
 				FROM custom_views
 				WHERE deleted_at IS NULL AND is_global = true
 				ORDER BY created DESC
@@ -86,8 +86,8 @@ func (s *Service) ListCustomViews(userID *int, includeGlobal bool) ([]CustomView
 		case "mysql", "mariadb", "sqlite", "sqlite3":
 			query = `
 				SELECT id, name, description, column_order, column_sizing, column_visibility,
-					column_display_types, filter_rules, filter_visibility, sort_field, sort_reverse,
-					is_global, owner_id, username, created, modified, deleted_at
+					column_display_types, filter_rules, filter_visibility, subrow_enabled, subrow_content,
+					column_spanning, sort_field, sort_reverse, is_global, owner_id, username, created, modified, deleted_at
 				FROM custom_views
 				WHERE deleted_at IS NULL AND is_global = 1
 				ORDER BY created DESC
@@ -121,16 +121,16 @@ func (s *Service) GetCustomView(id int) (*CustomView, error) {
 	case "postgresql", "postgres":
 		query = `
 			SELECT id, name, description, column_order, column_sizing, column_visibility,
-				column_display_types, filter_rules, filter_visibility, sort_field, sort_reverse,
-				is_global, owner_id, username, created, modified, deleted_at
+				column_display_types, filter_rules, filter_visibility, subrow_enabled, subrow_content,
+				column_spanning, sort_field, sort_reverse, is_global, owner_id, username, created, modified, deleted_at
 			FROM custom_views
 			WHERE id = $1 AND deleted_at IS NULL
 		`
 	case "mysql", "mariadb", "sqlite", "sqlite3":
 		query = `
 			SELECT id, name, description, column_order, column_sizing, column_visibility,
-				column_display_types, filter_rules, filter_visibility, sort_field, sort_reverse,
-				is_global, owner_id, username, created, modified, deleted_at
+				column_display_types, filter_rules, filter_visibility, subrow_enabled, subrow_content,
+				column_spanning, sort_field, sort_reverse, is_global, owner_id, username, created, modified, deleted_at
 			FROM custom_views
 			WHERE id = ? AND deleted_at IS NULL
 		`
@@ -158,6 +158,18 @@ func (s *Service) CreateCustomView(view CustomView, userID int, username string)
 	columnDisplayTypesJSON, _ := json.Marshal(view.ColumnDisplayTypes)
 	filterRulesJSON, _ := json.Marshal(view.FilterRules)
 	filterVisibilityJSON, _ := json.Marshal(view.FilterVisibility)
+	columnSpanningJSON, _ := json.Marshal(view.ColumnSpanning)
+	
+	// Set defaults for new fields
+	subrowEnabled := false
+	if view.SubrowEnabled != nil {
+		subrowEnabled = *view.SubrowEnabled
+	}
+	subrowContent := view.SubrowContent
+	if subrowContent == nil {
+		subrowContentStr := "summary"
+		subrowContent = &subrowContentStr
+	}
 
 	var insertQuery string
 	var args []interface{}
@@ -176,39 +188,42 @@ func (s *Service) CreateCustomView(view CustomView, userID int, username string)
 	case "postgresql", "postgres":
 		insertQuery = `
 			INSERT INTO custom_views (name, description, column_order, column_sizing, column_visibility,
-				column_display_types, filter_rules, filter_visibility, sort_field, sort_reverse,
-				is_global, owner_id, username)
-			VALUES ($1, $2, $3::jsonb, $4::jsonb, $5::jsonb, $6::jsonb, $7::jsonb, $8::jsonb, $9, $10, $11, $12, $13)
+				column_display_types, filter_rules, filter_visibility, subrow_enabled, subrow_content,
+				column_spanning, sort_field, sort_reverse, is_global, owner_id, username)
+			VALUES ($1, $2, $3::jsonb, $4::jsonb, $5::jsonb, $6::jsonb, $7::jsonb, $8::jsonb, $9, $10, $11::jsonb, $12, $13, $14, $15, $16)
 			RETURNING id, created, modified
 		`
 		args = []interface{}{
 			view.Name, view.Description, string(columnOrderJSON), string(columnSizingJSON),
 			string(columnVisibilityJSON), string(columnDisplayTypesJSON), string(filterRulesJSON),
-			string(filterVisibilityJSON), view.SortField, sortReverse, isGlobal, userID, username,
+			string(filterVisibilityJSON), subrowEnabled, subrowContent, string(columnSpanningJSON),
+			view.SortField, sortReverse, isGlobal, userID, username,
 		}
 	case "mysql", "mariadb":
 		insertQuery = `
 			INSERT INTO custom_views (name, description, column_order, column_sizing, column_visibility,
-				column_display_types, filter_rules, filter_visibility, sort_field, sort_reverse,
-				is_global, owner_id, username)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+				column_display_types, filter_rules, filter_visibility, subrow_enabled, subrow_content,
+				column_spanning, sort_field, sort_reverse, is_global, owner_id, username)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		`
 		args = []interface{}{
 			view.Name, view.Description, string(columnOrderJSON), string(columnSizingJSON),
 			string(columnVisibilityJSON), string(columnDisplayTypesJSON), string(filterRulesJSON),
-			string(filterVisibilityJSON), view.SortField, sortReverse, isGlobal, userID, username,
+			string(filterVisibilityJSON), subrowEnabled, subrowContent, string(columnSpanningJSON),
+			view.SortField, sortReverse, isGlobal, userID, username,
 		}
 	case "sqlite", "sqlite3":
 		insertQuery = `
 			INSERT INTO custom_views (name, description, column_order, column_sizing, column_visibility,
-				column_display_types, filter_rules, filter_visibility, sort_field, sort_reverse,
-				is_global, owner_id, username)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+				column_display_types, filter_rules, filter_visibility, subrow_enabled, subrow_content,
+				column_spanning, sort_field, sort_reverse, is_global, owner_id, username)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		`
 		args = []interface{}{
 			view.Name, view.Description, string(columnOrderJSON), string(columnSizingJSON),
 			string(columnVisibilityJSON), string(columnDisplayTypesJSON), string(filterRulesJSON),
-			string(filterVisibilityJSON), view.SortField, sortReverse, isGlobal, userID, username,
+			string(filterVisibilityJSON), subrowEnabled, subrowContent, string(columnSpanningJSON),
+			view.SortField, sortReverse, isGlobal, userID, username,
 		}
 	}
 
@@ -385,6 +400,37 @@ func (s *Service) UpdateCustomView(id int, updates CustomView, userID int) (*Cus
 		argIndex++
 		existing.IsGlobal = updates.IsGlobal
 	}
+	if updates.SubrowEnabled != nil {
+		if usePostgres {
+			setParts = append(setParts, fmt.Sprintf("subrow_enabled = $%d", argIndex))
+		} else {
+			setParts = append(setParts, "subrow_enabled = ?")
+		}
+		args = append(args, *updates.SubrowEnabled)
+		argIndex++
+		existing.SubrowEnabled = updates.SubrowEnabled
+	}
+	if updates.SubrowContent != nil {
+		if usePostgres {
+			setParts = append(setParts, fmt.Sprintf("subrow_content = $%d", argIndex))
+		} else {
+			setParts = append(setParts, "subrow_content = ?")
+		}
+		args = append(args, updates.SubrowContent)
+		argIndex++
+		existing.SubrowContent = updates.SubrowContent
+	}
+	if updates.ColumnSpanning != nil {
+		columnSpanningJSON, _ := json.Marshal(updates.ColumnSpanning)
+		if usePostgres {
+			setParts = append(setParts, fmt.Sprintf("column_spanning = $%d::jsonb", argIndex))
+		} else {
+			setParts = append(setParts, "column_spanning = ?")
+		}
+		args = append(args, string(columnSpanningJSON))
+		argIndex++
+		existing.ColumnSpanning = updates.ColumnSpanning
+	}
 
 	if len(setParts) == 0 {
 		return existing, nil // No updates
@@ -455,10 +501,10 @@ func (s *Service) DeleteCustomView(id int, userID int) error {
 func (s *Service) scanCustomView(scanner interface{}) (CustomView, error) {
 	var view CustomView
 	var id sql.NullInt64
-	var description, sortField, username, created, modified, deletedAt sql.NullString
+	var description, sortField, username, created, modified, deletedAt, subrowContent sql.NullString
 	var columnOrderJSON, columnSizingJSON, columnVisibilityJSON, columnDisplayTypesJSON sql.NullString
-	var filterRulesJSON, filterVisibilityJSON sql.NullString
-	var isGlobal, sortReverse sql.NullBool
+	var filterRulesJSON, filterVisibilityJSON, columnSpanningJSON sql.NullString
+	var isGlobal, sortReverse, subrowEnabled sql.NullBool
 
 	var scanErr error
 
@@ -468,16 +514,16 @@ func (s *Service) scanCustomView(scanner interface{}) (CustomView, error) {
 		scanErr = row.Scan(
 			&id, &view.Name, &description, &columnOrderJSON, &columnSizingJSON,
 			&columnVisibilityJSON, &columnDisplayTypesJSON, &filterRulesJSON,
-			&filterVisibilityJSON, &sortField, &sortReverse, &isGlobal,
-			&view.OwnerID, &username, &created, &modified, &deletedAt,
+			&filterVisibilityJSON, &subrowEnabled, &subrowContent, &columnSpanningJSON,
+			&sortField, &sortReverse, &isGlobal, &view.OwnerID, &username, &created, &modified, &deletedAt,
 		)
 	case *sql.Rows:
 		rows := scanner.(*sql.Rows)
 		scanErr = rows.Scan(
 			&id, &view.Name, &description, &columnOrderJSON, &columnSizingJSON,
 			&columnVisibilityJSON, &columnDisplayTypesJSON, &filterRulesJSON,
-			&filterVisibilityJSON, &sortField, &sortReverse, &isGlobal,
-			&view.OwnerID, &username, &created, &modified, &deletedAt,
+			&filterVisibilityJSON, &subrowEnabled, &subrowContent, &columnSpanningJSON,
+			&sortField, &sortReverse, &isGlobal, &view.OwnerID, &username, &created, &modified, &deletedAt,
 		)
 	default:
 		return view, fmt.Errorf("unsupported scanner type")
@@ -534,6 +580,15 @@ func (s *Service) scanCustomView(scanner interface{}) (CustomView, error) {
 	}
 	if filterVisibilityJSON.Valid {
 		json.Unmarshal([]byte(filterVisibilityJSON.String), &view.FilterVisibility)
+	}
+	if subrowEnabled.Valid {
+		view.SubrowEnabled = &subrowEnabled.Bool
+	}
+	if subrowContent.Valid {
+		view.SubrowContent = &subrowContent.String
+	}
+	if columnSpanningJSON.Valid {
+		json.Unmarshal([]byte(columnSpanningJSON.String), &view.ColumnSpanning)
 	}
 
 	return view, nil

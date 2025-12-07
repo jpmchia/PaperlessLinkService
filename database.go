@@ -79,6 +79,9 @@ func (s *Service) initCustomViewsTable() error {
 				column_display_types JSONB NOT NULL DEFAULT '{}'::jsonb,
 				filter_rules JSONB DEFAULT '[]'::jsonb,
 				filter_visibility JSONB DEFAULT '{}'::jsonb,
+				subrow_enabled BOOLEAN DEFAULT FALSE,
+				subrow_content VARCHAR(50),
+				column_spanning JSONB DEFAULT '{}'::jsonb,
 				sort_field VARCHAR(255),
 				sort_reverse BOOLEAN DEFAULT FALSE,
 				is_global BOOLEAN DEFAULT FALSE,
@@ -104,6 +107,9 @@ func (s *Service) initCustomViewsTable() error {
 				column_display_types JSON NOT NULL DEFAULT '{}',
 				filter_rules JSON DEFAULT '[]',
 				filter_visibility JSON DEFAULT '{}',
+				subrow_enabled BOOLEAN DEFAULT FALSE,
+				subrow_content VARCHAR(50),
+				column_spanning JSON DEFAULT '{}',
 				sort_field VARCHAR(255),
 				sort_reverse BOOLEAN DEFAULT FALSE,
 				is_global BOOLEAN DEFAULT FALSE,
@@ -129,6 +135,9 @@ func (s *Service) initCustomViewsTable() error {
 				column_display_types TEXT NOT NULL DEFAULT '{}',
 				filter_rules TEXT DEFAULT '[]',
 				filter_visibility TEXT DEFAULT '{}',
+				subrow_enabled INTEGER DEFAULT 0,
+				subrow_content TEXT,
+				column_spanning TEXT DEFAULT '{}',
 				sort_field TEXT,
 				sort_reverse INTEGER DEFAULT 0,
 				is_global INTEGER DEFAULT 0,
@@ -151,6 +160,46 @@ func (s *Service) initCustomViewsTable() error {
 	if _, err := s.db.Exec(createTableQuery); err != nil {
 		log.Printf("[Database] Error creating custom_views table: %v", err)
 		return fmt.Errorf("failed to create custom_views table: %w", err)
+	}
+
+	// Migrate existing tables to add new columns if they don't exist
+	log.Printf("[Database] Migrating custom_views table to add new columns")
+	migrationQueries := []string{}
+	switch s.config.DBEngine {
+	case "postgresql", "postgres":
+		migrationQueries = []string{
+			"ALTER TABLE custom_views ADD COLUMN IF NOT EXISTS subrow_enabled BOOLEAN DEFAULT FALSE",
+			"ALTER TABLE custom_views ADD COLUMN IF NOT EXISTS subrow_content VARCHAR(50)",
+			"ALTER TABLE custom_views ADD COLUMN IF NOT EXISTS column_spanning JSONB DEFAULT '{}'::jsonb",
+		}
+	case "mysql", "mariadb":
+		migrationQueries = []string{
+			"ALTER TABLE custom_views ADD COLUMN IF NOT EXISTS subrow_enabled BOOLEAN DEFAULT FALSE",
+			"ALTER TABLE custom_views ADD COLUMN IF NOT EXISTS subrow_content VARCHAR(50)",
+			"ALTER TABLE custom_views ADD COLUMN IF NOT EXISTS column_spanning JSON DEFAULT '{}'",
+		}
+	case "sqlite", "sqlite3":
+		// SQLite doesn't support IF NOT EXISTS for ALTER TABLE ADD COLUMN
+		// We'll check if columns exist first
+		var count int
+		checkQuery := "SELECT COUNT(*) FROM pragma_table_info('custom_views') WHERE name IN ('subrow_enabled', 'subrow_content', 'column_spanning')"
+		err := s.db.QueryRow(checkQuery).Scan(&count)
+		if err == nil && count < 3 {
+			migrationQueries = []string{
+				"ALTER TABLE custom_views ADD COLUMN subrow_enabled INTEGER DEFAULT 0",
+				"ALTER TABLE custom_views ADD COLUMN subrow_content TEXT",
+				"ALTER TABLE custom_views ADD COLUMN column_spanning TEXT DEFAULT '{}'",
+			}
+		}
+	}
+
+	for _, migrationQuery := range migrationQueries {
+		if migrationQuery != "" {
+			if _, err := s.db.Exec(migrationQuery); err != nil {
+				// Log but don't fail - column might already exist
+				log.Printf("[Database] Migration query may have failed (column might already exist): %v", err)
+			}
+		}
 	}
 
 	log.Printf("[Database] Successfully created/verified custom_views table")

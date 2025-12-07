@@ -32,6 +32,9 @@ type CustomView struct {
 	ColumnDisplayTypes map[string]string        `json:"column_display_types"`
 	FilterRules        []map[string]interface{} `json:"filter_rules,omitempty"`
 	FilterVisibility   map[string]bool          `json:"filter_visibility,omitempty"`
+	SubrowEnabled      *bool                    `json:"subrow_enabled,omitempty"`
+	SubrowContent      *string                  `json:"subrow_content,omitempty"` // 'summary', 'tags', or 'none'
+	ColumnSpanning     map[string]bool          `json:"column_spanning,omitempty"`
 	SortField          *string                  `json:"sort_field,omitempty"`
 	SortReverse        *bool                    `json:"sort_reverse,omitempty"`
 	IsGlobal           *bool                    `json:"is_global,omitempty"`
