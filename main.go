@@ -50,6 +50,20 @@ func main() {
 	customViewsAPI.HandleFunc("/{id:[0-9]+}/", service.handleUpdateCustomView).Methods("PUT", "PATCH")
 	customViewsAPI.HandleFunc("/{id:[0-9]+}/", service.handleDeleteCustomView).Methods("DELETE")
 
+	// API routes for tag groups
+	tagGroupsAPI := router.PathPrefix("/api/tag-groups").Subrouter()
+	tagGroupsAPI.HandleFunc("/", service.handleListTagGroups).Methods("GET")
+	tagGroupsAPI.HandleFunc("/", service.handleCreateTagGroup).Methods("POST")
+	tagGroupsAPI.HandleFunc("/{id:[0-9]+}/", service.handleGetTagGroup).Methods("GET")
+	tagGroupsAPI.HandleFunc("/{id:[0-9]+}/", service.handleUpdateTagGroup).Methods("PUT", "PATCH")
+	tagGroupsAPI.HandleFunc("/{id:[0-9]+}/", service.handleDeleteTagGroup).Methods("DELETE")
+
+	// API routes for tag descriptions
+	tagDescriptionsAPI := router.PathPrefix("/api/tag-descriptions").Subrouter()
+	tagDescriptionsAPI.HandleFunc("/{tagId:[0-9]+}/", service.handleGetTagDescription).Methods("GET")
+	tagDescriptionsAPI.HandleFunc("/{tagId:[0-9]+}/", service.handleSetTagDescription).Methods("PUT")
+	tagDescriptionsAPI.HandleFunc("/{tagId:[0-9]+}/", service.handleDeleteTagDescription).Methods("DELETE")
+
 	// Health check
 	router.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		if err := service.db.Ping(); err != nil {
@@ -85,6 +99,14 @@ func main() {
 		log.Printf("[Main]   PUT    /api/custom_views/{id}/")
 		log.Printf("[Main]   PATCH  /api/custom_views/{id}/")
 		log.Printf("[Main]   DELETE /api/custom_views/{id}/")
+		log.Printf("[Main]   GET    /api/tag-groups/")
+		log.Printf("[Main]   POST   /api/tag-groups/")
+		log.Printf("[Main]   GET    /api/tag-groups/{id}/")
+		log.Printf("[Main]   PUT    /api/tag-groups/{id}/")
+		log.Printf("[Main]   DELETE /api/tag-groups/{id}/")
+		log.Printf("[Main]   GET    /api/tag-descriptions/{tagId}/")
+		log.Printf("[Main]   PUT    /api/tag-descriptions/{tagId}/")
+		log.Printf("[Main]   DELETE /api/tag-descriptions/{tagId}/")
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("[Main] Server failed: %v", err)
 		}

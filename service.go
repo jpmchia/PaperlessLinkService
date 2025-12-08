@@ -43,6 +43,14 @@ func NewService(config *Config) (*Service, error) {
 	}
 	log.Printf("[Service] Custom views table initialized successfully")
 
+	// Initialize tag groups tables
+	log.Printf("[Service] Initializing tag groups tables")
+	if err := service.initTagGroupsTables(); err != nil {
+		log.Printf("[Service] Failed to initialize tag groups tables: %v", err)
+		return nil, fmt.Errorf("failed to initialize tag groups tables: %w", err)
+	}
+	log.Printf("[Service] Tag groups tables initialized successfully")
+
 	return service, nil
 }
 

@@ -13,9 +13,9 @@ import (
 
 // connectDB establishes a connection to the database
 func connectDB(config *Config) (*sql.DB, error) {
-	log.Printf("[Database] Connecting to database - Engine: %s, Host: %s, Port: %s, DB: %s", 
+	log.Printf("[Database] Connecting to database - Engine: %s, Host: %s, Port: %s, DB: %s",
 		config.DBEngine, config.DBHost, config.DBPort, config.DBName)
-	
+
 	var dsn string
 	var driverName string
 
@@ -171,24 +171,30 @@ func (s *Service) initCustomViewsTable() error {
 			"ALTER TABLE custom_views ADD COLUMN IF NOT EXISTS subrow_enabled BOOLEAN DEFAULT FALSE",
 			"ALTER TABLE custom_views ADD COLUMN IF NOT EXISTS subrow_content VARCHAR(50)",
 			"ALTER TABLE custom_views ADD COLUMN IF NOT EXISTS column_spanning JSONB DEFAULT '{}'::jsonb",
+			"ALTER TABLE custom_views ADD COLUMN IF NOT EXISTS filter_types JSONB DEFAULT '{}'::jsonb",
+			"ALTER TABLE custom_views ADD COLUMN IF NOT EXISTS edit_mode_settings JSONB DEFAULT '{}'::jsonb",
 		}
 	case "mysql", "mariadb":
 		migrationQueries = []string{
 			"ALTER TABLE custom_views ADD COLUMN IF NOT EXISTS subrow_enabled BOOLEAN DEFAULT FALSE",
 			"ALTER TABLE custom_views ADD COLUMN IF NOT EXISTS subrow_content VARCHAR(50)",
 			"ALTER TABLE custom_views ADD COLUMN IF NOT EXISTS column_spanning JSON DEFAULT '{}'",
+			"ALTER TABLE custom_views ADD COLUMN IF NOT EXISTS filter_types JSON DEFAULT '{}'",
+			"ALTER TABLE custom_views ADD COLUMN IF NOT EXISTS edit_mode_settings JSON DEFAULT '{}'",
 		}
 	case "sqlite", "sqlite3":
 		// SQLite doesn't support IF NOT EXISTS for ALTER TABLE ADD COLUMN
 		// We'll check if columns exist first
 		var count int
-		checkQuery := "SELECT COUNT(*) FROM pragma_table_info('custom_views') WHERE name IN ('subrow_enabled', 'subrow_content', 'column_spanning')"
+		checkQuery := "SELECT COUNT(*) FROM pragma_table_info('custom_views') WHERE name IN ('subrow_enabled', 'subrow_content', 'column_spanning', 'filter_types', 'edit_mode_settings')"
 		err := s.db.QueryRow(checkQuery).Scan(&count)
-		if err == nil && count < 3 {
+		if err == nil && count < 5 {
 			migrationQueries = []string{
 				"ALTER TABLE custom_views ADD COLUMN subrow_enabled INTEGER DEFAULT 0",
 				"ALTER TABLE custom_views ADD COLUMN subrow_content TEXT",
 				"ALTER TABLE custom_views ADD COLUMN column_spanning TEXT DEFAULT '{}'",
+				"ALTER TABLE custom_views ADD COLUMN filter_types TEXT DEFAULT '{}'",
+				"ALTER TABLE custom_views ADD COLUMN edit_mode_settings TEXT DEFAULT '{}'",
 			}
 		}
 	}
@@ -206,3 +212,150 @@ func (s *Service) initCustomViewsTable() error {
 	return nil
 }
 
+// initTagGroupsTables creates the tag_groups and tag_group_memberships tables if they don't exist
+// Also creates tag_descriptions table for storing descriptions for tags
+func (s *Service) initTagGroupsTables() error {
+	log.Printf("[Database] Initializing tag groups tables for engine: %s", s.config.DBEngine)
+
+	// Create tag_groups table
+	var createTagGroupsQuery string
+	switch s.config.DBEngine {
+	case "postgresql", "postgres":
+		createTagGroupsQuery = `
+			CREATE TABLE IF NOT EXISTS tag_groups (
+				id SERIAL PRIMARY KEY,
+				name VARCHAR(255) NOT NULL UNIQUE,
+				description TEXT,
+				created TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+				modified TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+			);
+			CREATE INDEX IF NOT EXISTS idx_tag_groups_name ON tag_groups(name);
+		`
+	case "mysql", "mariadb":
+		createTagGroupsQuery = `
+			CREATE TABLE IF NOT EXISTS tag_groups (
+				id INT AUTO_INCREMENT PRIMARY KEY,
+				name VARCHAR(255) NOT NULL UNIQUE,
+				description TEXT,
+				created TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+				modified TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+				INDEX idx_name (name)
+			);
+		`
+	case "sqlite", "sqlite3":
+		createTagGroupsQuery = `
+			CREATE TABLE IF NOT EXISTS tag_groups (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				name TEXT NOT NULL UNIQUE,
+				description TEXT,
+				created TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+				modified TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+			);
+			CREATE INDEX IF NOT EXISTS idx_tag_groups_name ON tag_groups(name);
+		`
+	default:
+		return fmt.Errorf("unsupported database engine: %s", s.config.DBEngine)
+	}
+
+	log.Printf("[Database] Executing CREATE TABLE statement for tag_groups")
+	if _, err := s.db.Exec(createTagGroupsQuery); err != nil {
+		log.Printf("[Database] Error creating tag_groups table: %v", err)
+		return fmt.Errorf("failed to create tag_groups table: %w", err)
+	}
+
+	// Create tag_group_memberships table (many-to-many relationship)
+	var createMembershipsQuery string
+	switch s.config.DBEngine {
+	case "postgresql", "postgres":
+		createMembershipsQuery = `
+			CREATE TABLE IF NOT EXISTS tag_group_memberships (
+				id SERIAL PRIMARY KEY,
+				tag_group_id INTEGER NOT NULL REFERENCES tag_groups(id) ON DELETE CASCADE,
+				tag_id INTEGER NOT NULL,
+				created TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+				UNIQUE(tag_group_id, tag_id)
+			);
+			CREATE INDEX IF NOT EXISTS idx_memberships_group ON tag_group_memberships(tag_group_id);
+			CREATE INDEX IF NOT EXISTS idx_memberships_tag ON tag_group_memberships(tag_id);
+		`
+	case "mysql", "mariadb":
+		createMembershipsQuery = `
+			CREATE TABLE IF NOT EXISTS tag_group_memberships (
+				id INT AUTO_INCREMENT PRIMARY KEY,
+				tag_group_id INT NOT NULL,
+				tag_id INT NOT NULL,
+				created TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+				UNIQUE KEY unique_membership (tag_group_id, tag_id),
+				INDEX idx_group (tag_group_id),
+				INDEX idx_tag (tag_id),
+				FOREIGN KEY (tag_group_id) REFERENCES tag_groups(id) ON DELETE CASCADE
+			);
+		`
+	case "sqlite", "sqlite3":
+		createMembershipsQuery = `
+			CREATE TABLE IF NOT EXISTS tag_group_memberships (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				tag_group_id INTEGER NOT NULL,
+				tag_id INTEGER NOT NULL,
+				created TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+				UNIQUE(tag_group_id, tag_id),
+				FOREIGN KEY (tag_group_id) REFERENCES tag_groups(id) ON DELETE CASCADE
+			);
+			CREATE INDEX IF NOT EXISTS idx_memberships_group ON tag_group_memberships(tag_group_id);
+			CREATE INDEX IF NOT EXISTS idx_memberships_tag ON tag_group_memberships(tag_id);
+		`
+	}
+
+	log.Printf("[Database] Executing CREATE TABLE statement for tag_group_memberships")
+	if _, err := s.db.Exec(createMembershipsQuery); err != nil {
+		log.Printf("[Database] Error creating tag_group_memberships table: %v", err)
+		return fmt.Errorf("failed to create tag_group_memberships table: %w", err)
+	}
+
+	// Create tag_descriptions table for storing descriptions for individual tags
+	var createDescriptionsQuery string
+	switch s.config.DBEngine {
+	case "postgresql", "postgres":
+		createDescriptionsQuery = `
+			CREATE TABLE IF NOT EXISTS tag_descriptions (
+				id SERIAL PRIMARY KEY,
+				tag_id INTEGER NOT NULL UNIQUE,
+				description TEXT,
+				created TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+				modified TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+			);
+			CREATE INDEX IF NOT EXISTS idx_tag_descriptions_tag ON tag_descriptions(tag_id);
+		`
+	case "mysql", "mariadb":
+		createDescriptionsQuery = `
+			CREATE TABLE IF NOT EXISTS tag_descriptions (
+				id INT AUTO_INCREMENT PRIMARY KEY,
+				tag_id INT NOT NULL UNIQUE,
+				description TEXT,
+				created TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+				modified TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+				INDEX idx_tag (tag_id)
+			);
+		`
+	case "sqlite", "sqlite3":
+		createDescriptionsQuery = `
+			CREATE TABLE IF NOT EXISTS tag_descriptions (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				tag_id INTEGER NOT NULL UNIQUE,
+				description TEXT,
+				created TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+				modified TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+			);
+			CREATE INDEX IF NOT EXISTS idx_tag_descriptions_tag ON tag_descriptions(tag_id);
+		`
+	}
+
+	log.Printf("[Database] Executing CREATE TABLE statement for tag_descriptions")
+	if _, err := s.db.Exec(createDescriptionsQuery); err != nil {
+		log.Printf("[Database] Error creating tag_descriptions table: %v", err)
+		return fmt.Errorf("failed to create tag_descriptions table: %w", err)
+	}
+
+	log.Printf("[Database] Successfully created/verified tag groups tables")
+	return nil
+}
