@@ -173,6 +173,7 @@ func (s *Service) initCustomViewsTable() error {
 			"ALTER TABLE custom_views ADD COLUMN IF NOT EXISTS column_spanning JSONB DEFAULT '{}'::jsonb",
 			"ALTER TABLE custom_views ADD COLUMN IF NOT EXISTS filter_types JSONB DEFAULT '{}'::jsonb",
 			"ALTER TABLE custom_views ADD COLUMN IF NOT EXISTS edit_mode_settings JSONB DEFAULT '{}'::jsonb",
+			"ALTER TABLE custom_views ADD COLUMN IF NOT EXISTS column_styles JSONB DEFAULT '{}'::jsonb",
 		}
 	case "mysql", "mariadb":
 		migrationQueries = []string{
@@ -181,20 +182,22 @@ func (s *Service) initCustomViewsTable() error {
 			"ALTER TABLE custom_views ADD COLUMN IF NOT EXISTS column_spanning JSON DEFAULT '{}'",
 			"ALTER TABLE custom_views ADD COLUMN IF NOT EXISTS filter_types JSON DEFAULT '{}'",
 			"ALTER TABLE custom_views ADD COLUMN IF NOT EXISTS edit_mode_settings JSON DEFAULT '{}'",
+			"ALTER TABLE custom_views ADD COLUMN IF NOT EXISTS column_styles JSON DEFAULT '{}'",
 		}
 	case "sqlite", "sqlite3":
 		// SQLite doesn't support IF NOT EXISTS for ALTER TABLE ADD COLUMN
 		// We'll check if columns exist first
 		var count int
-		checkQuery := "SELECT COUNT(*) FROM pragma_table_info('custom_views') WHERE name IN ('subrow_enabled', 'subrow_content', 'column_spanning', 'filter_types', 'edit_mode_settings')"
+		checkQuery := "SELECT COUNT(*) FROM pragma_table_info('custom_views') WHERE name IN ('subrow_enabled', 'subrow_content', 'column_spanning', 'filter_types', 'edit_mode_settings', 'column_styles')"
 		err := s.db.QueryRow(checkQuery).Scan(&count)
-		if err == nil && count < 5 {
+		if err == nil && count < 6 {
 			migrationQueries = []string{
 				"ALTER TABLE custom_views ADD COLUMN subrow_enabled INTEGER DEFAULT 0",
 				"ALTER TABLE custom_views ADD COLUMN subrow_content TEXT",
 				"ALTER TABLE custom_views ADD COLUMN column_spanning TEXT DEFAULT '{}'",
 				"ALTER TABLE custom_views ADD COLUMN filter_types TEXT DEFAULT '{}'",
 				"ALTER TABLE custom_views ADD COLUMN edit_mode_settings TEXT DEFAULT '{}'",
+				"ALTER TABLE custom_views ADD COLUMN column_styles TEXT DEFAULT '{}'",
 			}
 		}
 	}
@@ -202,7 +205,7 @@ func (s *Service) initCustomViewsTable() error {
 	for _, migrationQuery := range migrationQueries {
 		if migrationQuery != "" {
 			if _, err := s.db.Exec(migrationQuery); err != nil {
-				// Log but don't fail - column might already exist
+				// Log but don't fail - column might already exist or SQLite partial failure
 				log.Printf("[Database] Migration query may have failed (column might already exist): %v", err)
 			}
 		}

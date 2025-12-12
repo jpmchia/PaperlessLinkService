@@ -34,6 +34,7 @@ type CustomView struct {
 	FilterVisibility   map[string]bool          `json:"filter_visibility,omitempty"`
 	FilterTypes        map[string]string        `json:"filter_types,omitempty"`
 	EditModeSettings   map[string]interface{}   `json:"edit_mode_settings,omitempty"` // map[fieldId]{enabled: bool, entry_type: string}
+	ColumnStyles       map[string]string        `json:"column_styles,omitempty"`      // map[fieldId]cssString
 	SubrowEnabled      *bool                    `json:"subrow_enabled,omitempty"`
 	SubrowContent      *string                  `json:"subrow_content,omitempty"` // 'summary', 'tags', or 'none'
 	ColumnSpanning     map[string]bool          `json:"column_spanning,omitempty"`
@@ -57,12 +58,12 @@ type CustomViewListResponse struct {
 
 // TagGroup represents a group of tags
 type TagGroup struct {
-	ID          *int     `json:"id,omitempty"`
-	Name        string   `json:"name"`
-	Description *string  `json:"description,omitempty"`
-	TagIDs      []int    `json:"tag_ids,omitempty"` // Tags in this group
-	Created     *string  `json:"created,omitempty"`
-	Modified    *string  `json:"modified,omitempty"`
+	ID          *int    `json:"id,omitempty"`
+	Name        string  `json:"name"`
+	Description *string `json:"description,omitempty"`
+	TagIDs      []int   `json:"tag_ids,omitempty"` // Tags in this group
+	Created     *string `json:"created,omitempty"`
+	Modified    *string `json:"modified,omitempty"`
 }
 
 // TagGroupListResponse represents a list of tag groups
@@ -79,4 +80,3 @@ type TagDescription struct {
 	Created     *string `json:"created,omitempty"`
 	Modified    *string `json:"modified,omitempty"`
 }
-
